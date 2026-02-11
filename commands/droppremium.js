@@ -15,7 +15,7 @@ module.exports = {
             return interaction.reply({ content: 'Tej komendy można użyć tylko na wyznaczonym kanale.', flags: MessageFlags.Ephemeral });
         }
 
-        if (interaction.user.id !== '1358521149452980364') {
+        if (!interaction.member.roles.cache.has('1358521149452980364')) {
             return interaction.reply({ content: 'Nie masz uprawnień do użycia tej komendy.', flags: MessageFlags.Ephemeral });
         }
 

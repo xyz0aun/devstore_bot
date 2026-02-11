@@ -18,7 +18,7 @@ module.exports = {
             return interaction.reply({ content: 'Tej komendy można użyć tylko na serwerze.', flags: MessageFlags.Ephemeral });
         }
 
-        const allowedRoleId = '866995316510949376';
+        const allowedRoleId = process.env.ALLOWED_ROLE;
         const hasRole = Boolean(interaction.member?.roles?.cache?.has(allowedRoleId));
         if (!hasRole) {
             return interaction.reply({ content: 'Nie masz uprawnień do użycia tej komendy.', flags: MessageFlags.Ephemeral });
@@ -46,10 +46,10 @@ module.exports = {
             .setCustomId('ticket_category_select')
             .setPlaceholder('Wybierz kategorię...')
             .addOptions(
-                { label: 'POMOC', value: 'pomoc' },
-                { label: 'PYTANIE', value: 'pytanie' },
-                { label: 'BŁĄD', value: 'blad' },
-                { label: 'ZGŁOSZENIE', value: 'zgloszenie' },
+                { label: 'POMOC', value: 'pomoc', emoji: '🔧' },
+                { label: 'PYTANIE', value: 'pytanie', emoji: '❓' },
+                { label: 'BŁĄD', value: 'blad', emoji: '🐞' },
+                { label: 'ZGŁOSZENIE', value: 'zgloszenie', emoji: '☄️' },
             );
 
         const display = new TextDisplayBuilder().setMessageContent({

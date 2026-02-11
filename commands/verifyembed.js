@@ -17,7 +17,7 @@ module.exports = {
             return interaction.reply({ content: 'Tej komendy można użyć tylko na serwerze.'});
         }
 
-        const allowedRoleId = '866995316510949376';
+        const allowedRoleId = process.env.ALLOWED_ROLE;
         const hasRole = Boolean(interaction.member?.roles?.cache?.has(allowedRoleId));
         if (!hasRole) {
             return interaction.reply({ content: 'Nie masz uprawnień do użycia tej komendy.', flags: MessageFlags.Ephemeral });

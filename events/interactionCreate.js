@@ -7,12 +7,18 @@ const {
     MessageFlags,
     ModalBuilder,
     PermissionsBitField,
+    StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder,
     TextInputBuilder,
     TextInputStyle,
 } = require('discord.js');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { addParticipant, getGiveaway } = require('../utils/giveawayUtils');
+const { getOpenTicket, getOpenOrder, addTicket, addOrder, removeByChannelId } = require('../utils/ticketUtils');
 const TextDisplayBuilder = require('../utils/TextDisplayBuilder');
+const discordTranscripts = require('discord-html-transcripts');
+const config = require('../config.json');
+    
 
 const VERIFIED_ROLE_ID = '868021206694101022';
 
@@ -355,7 +361,12 @@ module.exports = {
                 return safeEphemeralError(interaction, 'Niepoprawna kategoria ticketa.');
             }
 
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            try {
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            } catch (err) {
+                console.warn('[TICKET] Interaction timeout/error during deferReply');
+                return;
+            }
 
             const guild = interaction.guild;
             const member = interaction.member;
@@ -363,22 +374,19 @@ module.exports = {
                 return interaction.editReply({ content: 'Nie mogę pobrać danych serwera/użytkownika.' });
             }
 
-            const existingTicket = guild.channels.cache.find((ch) => {
-                if (ch.type !== ChannelType.GuildText) return false;
-                if (!ALL_TICKET_CATEGORY_IDS.has(ch.parentId)) return false;
-                const topic = String(ch.topic || '');
-                return topic.includes(`ticketOwner=${interaction.user.id}`);
-            });
-
-            if (existingTicket) {
-                return interaction.editReply({ content: `Masz już otwarty ticket: ${existingTicket}` });
+            const openTicketId = getOpenTicket(interaction.user.id);
+            if (openTicketId) {
+                const openChannel = guild.channels.cache.get(openTicketId);
+                if (openChannel) {
+                    return interaction.editReply({ content: `Masz już otwarty ticket: ${openChannel}` });
+                }
             }
 
             const prefix = TICKET_CHANNEL_PREFIX_BY_TYPE[categoryKey] || '';
             const nameUser = sanitizeChannelNamePart(interaction.user.username);
             const channelName = `${prefix}${nameUser}`.slice(0, 90);
 
-            const ticketCategoryId = TICKET_CATEGORY_IDS_BY_TYPE[categoryKey];
+            const ticketCategoryId = config.ticketKategories[categoryKey];
             if (!ticketCategoryId) {
                 return interaction.editReply({ content: 'Niepoprawna kategoria ticketa.' });
             }
@@ -388,58 +396,114 @@ module.exports = {
                 return interaction.editReply({ content: 'Nie znaleziono kategorii ticketów (sprawdź ID kategorii).' });
             }
 
+            const permissionOverwrites = [
+                {
+                    id: config.everyoneRole,
+                    deny: [PermissionsBitField.Flags.ViewChannel],
+                },
+                ...config.ticketPermRoles.map((role) => {
+                    return {
+                        id: role,
+                        allow: [
+                            PermissionsBitField.Flags.ViewChannel,
+                            PermissionsBitField.Flags.SendMessages,
+                            PermissionsBitField.Flags.ReadMessageHistory,
+                            PermissionsBitField.Flags.AttachFiles,
+                            PermissionsBitField.Flags.EmbedLinks,
+                        ],
+                    };
+                }),
+                {
+                    id: interaction.user.id,
+                    allow: [
+                        PermissionsBitField.Flags.ViewChannel,
+                        PermissionsBitField.Flags.SendMessages,
+                        PermissionsBitField.Flags.ReadMessageHistory,
+                        PermissionsBitField.Flags.AttachFiles,
+                        PermissionsBitField.Flags.EmbedLinks,
+                    ],
+                }
+            ]
+
             try {
                 const channel = await guild.channels.create({
                     name: channelName,
                     type: ChannelType.GuildText,
                     parent: ticketCategoryId,
                     topic: `ticketOwner=${interaction.user.id};ticketType=${categoryKey}`,
-                    permissionOverwrites: [
-                        {
-                            id: guild.roles.everyone.id,
-                            deny: [PermissionsBitField.Flags.ViewChannel],
-                        },
-                        {
-                            id: '868384027453829120',
-                            allow: [
-                                PermissionsBitField.Flags.ViewChannel,
-                                PermissionsBitField.Flags.SendMessages,
-                                PermissionsBitField.Flags.ReadMessageHistory,
-                                PermissionsBitField.Flags.AttachFiles,
-                                PermissionsBitField.Flags.EmbedLinks,
-                            ],
-                        },
-                        {
-                            id: '1467281259402236097',
-                            allow: [
-                                PermissionsBitField.Flags.ViewChannel,
-                                PermissionsBitField.Flags.SendMessages,
-                                PermissionsBitField.Flags.ReadMessageHistory,
-                                PermissionsBitField.Flags.AttachFiles,
-                                PermissionsBitField.Flags.EmbedLinks,
-                            ],
-                        },
-                        {
-                            id: interaction.user.id,
-                            allow: [
-                                PermissionsBitField.Flags.ViewChannel,
-                                PermissionsBitField.Flags.SendMessages,
-                                PermissionsBitField.Flags.ReadMessageHistory,
-                                PermissionsBitField.Flags.AttachFiles,
-                                PermissionsBitField.Flags.EmbedLinks,
-                            ],
-                        },
-                    ],
+                    permissionOverwrites: permissionOverwrites
+                    //     [
+                    //     {
+                    //         id: guild.roles.everyone.id,
+                    //         deny: [PermissionsBitField.Flags.ViewChannel],
+                    //     },
+                    //     {
+                    //         id: '868384027453829120',
+                    //         allow: [
+                    //             PermissionsBitField.Flags.ViewChannel,
+                    //             PermissionsBitField.Flags.SendMessages,
+                    //             PermissionsBitField.Flags.ReadMessageHistory,
+                    //             PermissionsBitField.Flags.AttachFiles,
+                    //             PermissionsBitField.Flags.EmbedLinks,
+                    //         ],
+                    //     },
+                    //     {
+                    //         id: '1467281259402236097',
+                    //         allow: [
+                    //             PermissionsBitField.Flags.ViewChannel,
+                    //             PermissionsBitField.Flags.SendMessages,
+                    //             PermissionsBitField.Flags.ReadMessageHistory,
+                    //             PermissionsBitField.Flags.AttachFiles,
+                    //             PermissionsBitField.Flags.EmbedLinks,
+                    //         ],
+                    //     },
+                    //     {
+                    //         id: interaction.user.id,
+                    //         allow: [
+                    //             PermissionsBitField.Flags.ViewChannel,
+                    //             PermissionsBitField.Flags.SendMessages,
+                    //             PermissionsBitField.Flags.ReadMessageHistory,
+                    //             PermissionsBitField.Flags.AttachFiles,
+                    //             PermissionsBitField.Flags.EmbedLinks,
+                    //         ],
+                    //     },
+                    // ],
                 });
 
                 const createdAt = Math.floor(Date.now() / 1000);
                 const accountCreatedAt = Math.floor(interaction.user.createdTimestamp / 1000);
                 const joinedServerAt = member?.joinedTimestamp ? Math.floor(member.joinedTimestamp / 1000) : null;
 
-                const closeButton = new ButtonBuilder()
-                    .setCustomId(`ticket_close:${interaction.user.id}`)
-                    .setLabel('×⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀Kliknij w przycisk, aby zamknąć ticketa!⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀×')
-                    .setStyle(ButtonStyle.Danger);
+                const managementMenu = new StringSelectMenuBuilder()
+                    .setCustomId(`ticket_manage:${interaction.user.id}`)
+                    .setPlaceholder('Zarządzaj ticketem...')
+                    .addOptions(
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Zamknij')
+                            .setDescription('Zamyka aktualny ticket')
+                            .setValue('zamknij')
+                            .setEmoji('🔒'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Dodaj użytkownika')
+                            .setDescription('Dodaje użytkownika do ticketa')
+                            .setValue('dodaj_uzytkownika')
+                            .setEmoji('➕'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Usuń użytkownika')
+                            .setDescription('Usuwa użytkownika z ticketa')
+                            .setValue('usun_uzytkownika')
+                            .setEmoji('➖'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Zmień nazwę')
+                            .setDescription('Zmienia nazwę kanału')
+                            .setValue('zmien_nazwe')
+                            .setEmoji('📝'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Zmień kategorię')
+                            .setDescription('Zmienia kategorię ticketa')
+                            .setValue('zmien_kategorie')
+                            .setEmoji('📁'),
+                    );
 
                 const header = '```🧿 • DEVSTORE.PL - Pomoc```';
                 const body =
@@ -460,9 +524,11 @@ module.exports = {
                     gallery.addItems((item) => item.setURL(imageUrl))
                 );
                 display.addTextDisplayComponents((t) => t.setContent(body));
-                display.addActionRowComponents((row) => row.setComponents(closeButton));
+                display.addActionRowComponents((row) => row.setComponents(managementMenu));
 
-                await channel.send({ components: [display], flags: MessageFlags.IsComponentsV2 });
+                addTicket(interaction.user.id, channel.id);
+                const welcomeMsg = await channel.send({ components: [display], flags: MessageFlags.IsComponentsV2 });
+                await welcomeMsg.pin().catch(() => {});
                 return interaction.editReply({ content: `Utworzono ticket: ${channel}` });
             } catch (err) {
                 console.error('[TICKET] create failed:', err);
@@ -489,7 +555,12 @@ module.exports = {
                 return safeEphemeralError(interaction, 'Niepoprawna kategoria zamówienia.');
             }
 
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            try {
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            } catch (err) {
+                console.warn('[SHOP] Interaction timeout/error during deferReply');
+                return;
+            }
 
             const guild = interaction.guild;
             const member = interaction.member;
@@ -497,15 +568,12 @@ module.exports = {
                 return interaction.editReply({ content: 'Nie mogę pobrać danych serwera/użytkownika.' });
             }
 
-            const existingOrder = guild.channels.cache.find((ch) => {
-                if (ch.type !== ChannelType.GuildText) return false;
-                if (!ALL_SHOP_CATEGORY_IDS.has(ch.parentId)) return false;
-                const topic = String(ch.topic || '');
-                return topic.includes(`shopOwner=${interaction.user.id}`);
-            });
-
-            if (existingOrder) {
-                return interaction.editReply({ content: `Masz już otwarte zamówienie: ${existingOrder}` });
+            const openOrderId = getOpenOrder(interaction.user.id);
+            if (openOrderId) {
+                const openChannel = guild.channels.cache.get(openOrderId);
+                if (openChannel) {
+                    return interaction.editReply({ content: `Masz już otwarte zamówienie: ${openChannel}` });
+                }
             }
 
             const shopCategoryId = SHOP_CATEGORY_IDS_BY_TYPE[categoryKey];
@@ -521,6 +589,21 @@ module.exports = {
             const prefix = SHOP_CHANNEL_PREFIX_BY_TYPE[categoryKey] || '';
             const nameUser = sanitizeChannelNamePart(interaction.user.username);
             const channelName = `${prefix}${nameUser}`.slice(0, 90);
+
+            const permissionOverwrites = [
+                {
+                    id: guild.roles.everyone.id,
+                    deny: [PermissionsBitField.Flags.ViewChannel],
+                },
+                {
+                    id: interaction.user.id,
+                    allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
+                },
+                ...SHOP_STAFF_ROLE_IDS.map((roleId) => ({
+                    id: roleId,
+                    allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
+                })),
+            ];
 
             try {
                 const accessIds = getShopAccessEffectiveIdsByType(categoryKey);
@@ -561,10 +644,36 @@ module.exports = {
                 const accountCreatedAt = Math.floor(interaction.user.createdTimestamp / 1000);
                 const joinedServerAt = member?.joinedTimestamp ? Math.floor(member.joinedTimestamp / 1000) : null;
 
-                const closeButton = new ButtonBuilder()
-                    .setCustomId(`shop_close:${interaction.user.id}`)
-                    .setLabel('×⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀Kliknij w przycisk, aby zamknąć zamówienie!⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀×')
-                    .setStyle(ButtonStyle.Danger);
+                const managementMenu = new StringSelectMenuBuilder()
+                    .setCustomId(`shop_manage:${interaction.user.id}`)
+                    .setPlaceholder('Zarządzaj zamówieniem...')
+                    .addOptions(
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Zamknij')
+                            .setDescription('Zamyka aktualne zamówienie')
+                            .setValue('zamknij')
+                            .setEmoji('🔒'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Dodaj użytkownika')
+                            .setDescription('Dodaje użytkownika do zamówienia')
+                            .setValue('dodaj_uzytkownika')
+                            .setEmoji('➕'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Usuń użytkownika')
+                            .setDescription('Usuwa użytkownika z zamówienia')
+                            .setValue('usun_uzytkownika')
+                            .setEmoji('➖'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Zmień nazwę')
+                            .setDescription('Zmienia nazwę kanału')
+                            .setValue('zmien_nazwe')
+                            .setEmoji('📝'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Zmień kategorię')
+                            .setDescription('Zmienia kategorię zamówienia')
+                            .setValue('zmien_kategorie')
+                            .setEmoji('📁'),
+                    );
 
                 const header = '```🧿 • DEVSTORE.PL - Zamówienie```';
                 const body =
@@ -585,9 +694,11 @@ module.exports = {
                     gallery.addItems((item) => item.setURL(finalImageUrl))
                 );
                 display.addTextDisplayComponents((t) => t.setContent(body));
-                display.addActionRowComponents((row) => row.setComponents(closeButton));
+                display.addActionRowComponents((row) => row.setComponents(managementMenu));
 
-                await channel.send({ components: [display], flags: MessageFlags.IsComponentsV2 });
+                addOrder(interaction.user.id, channel.id);
+                const welcomeMsg = await channel.send({ components: [display], flags: MessageFlags.IsComponentsV2 });
+                await welcomeMsg.pin().catch(() => {});
                 return interaction.editReply({ content: `Utworzono zamówienie: ${channel}` });
             } catch (err) {
                 console.error('[SHOP] create failed:', err);
@@ -596,160 +707,147 @@ module.exports = {
             }
         }
 
-        if (interaction.isButton() && interaction.customId.startsWith('ticket_close:')) {
-            const channel = interaction.channel;
-            if (!channel || channel.type !== ChannelType.GuildText) {
-                return safeEphemeralError(interaction, 'To nie jest kanał ticketa.');
-            }
+        if (interaction.isStringSelectMenu() && (interaction.customId.startsWith('ticket_manage:') || interaction.customId.startsWith('shop_manage:'))) {
+            const selectedValue = interaction.values?.[0];
+            const [customIdPrefix, ownerId] = interaction.customId.split(':');
+            const isTicket = customIdPrefix === 'ticket_manage';
+            
+            if (selectedValue === 'zamknij') {
+                const channel = interaction.channel;
+                if (!channel || channel.type !== ChannelType.GuildText) {
+                    return safeEphemeralError(interaction, 'To nie jest poprawny kanał.');
+                }
 
-            const guild = interaction.guild;
-            if (!guild) {
-                return safeEphemeralError(interaction, 'Nie mogę pobrać serwera.');
-            }
+                const guild = interaction.guild;
+                if (!guild) {
+                    return safeEphemeralError(interaction, 'Nie mogę pobrać serwera.');
+                }
 
-            const fromCustomIdOwnerId = interaction.customId.split(':')[1];
-            const topic = String(channel.topic || '');
-            const fromTopicOwnerId = topic.match(/ticketOwner=(\d{17,20})/)?.[1] || null;
-            const ownerId = fromTopicOwnerId || fromCustomIdOwnerId || null;
+                if (!ownerId) {
+                    return safeEphemeralError(interaction, 'Nie mogę ustalić właściciela.');
+                }
 
-            if (!ownerId) {
-                return safeEphemeralError(interaction, 'Nie mogę ustalić właściciela ticketa.');
-            }
-
-            try {
-                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-            } catch (err) {
-                if (err?.code === 10062) {
+                try {
+                    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+                } catch (err) {
                     return;
                 }
-                return;
-            }
 
-            const canClose =
-                interaction.user.id === ownerId ||
-                Boolean(interaction.member?.roles?.cache?.has('1467281259402236097')) ||
-                interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageChannels) ||
-                interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+                const staffRole = isTicket ? '1467281259402236097' : null; // Add shop staff role if needed or use SHOP_STAFF_ROLE_IDS
+                const canClose =
+                    config.ticketCloseRoles.some((role) => interaction.member?.roles?.cache?.has(role)) ||
+                    (staffRole && interaction.member?.roles?.cache?.has(staffRole)) ||
+                    interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageChannels) ||
+                    interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
 
-            if (!canClose) {
-                return interaction.editReply({ content: 'Nie masz uprawnień do zamknięcia tego ticketa.' });
-            }
-
-            const archiveCategory = await guild.channels.fetch(TICKET_ARCHIVE_CATEGORY_ID).catch(() => null);
-            if (!archiveCategory || archiveCategory.type !== ChannelType.GuildCategory) {
-                return interaction.editReply({ content: 'Nie znaleziono kategorii archiwum ticketów (sprawdź ID kategorii).' });
-            }
-
-            try {
-                await channel.setParent(TICKET_ARCHIVE_CATEGORY_ID, { lockPermissions: false });
-
-                await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
-                    ViewChannel: false,
-                });
-
-                for (const roleId of TICKET_STAFF_ROLE_IDS) {
-                    await channel.permissionOverwrites.edit(roleId, {
-                        ViewChannel: true,
-                        ReadMessageHistory: true,
-                        SendMessages: true,
-                    });
+                if (!canClose) {
+                    return interaction.editReply({ content: 'Nie masz uprawnień do wykonania tej akcji.' });
                 }
 
-                await channel.permissionOverwrites.edit(ownerId, {
-                    ViewChannel: false,
-                    SendMessages: false,
-                    ReadMessageHistory: false,
+                const transcriptChannelId = isTicket ? config.transcriptChannelId : config.orderTranscriptChannelId;
+                const transcriptChannel = interaction.guild.channels.cache.get(transcriptChannelId);
+                
+                const headerText = isTicket ? '⌚ • DEVSTORE.PL - Zapis Ticketów' : '⌚ • DEVSTORE.PL - Zapis Zamówień';
+                
+                const body = '\n> Zamknięto przez `' + interaction.user.tag + '`\n'
+                    + '> Kanał: `' + interaction.channel.name + '`\n'
+                    + '> Właściciel: `' + (interaction.guild.members.cache.get(ownerId)?.user?.tag || ownerId) + '`\n'
+                    + '> Utworzono: `' + interaction.channel.createdAt + '`\n'
+                    + '> Zamknięto: `' + interaction.createdAt + '`\n';
+
+                const attachment = await discordTranscripts.createTranscript(interaction.channel, {
+                    fileName: `transcript-${interaction.channel.name}.html`,
                 });
 
-                return interaction.editReply({ content: 'Ticket zamknięty i przeniesiony do archiwum.' });
-            } catch (err) {
-                console.error('[TICKET] close failed:', err);
-                return interaction.editReply({ content: 'Nie udało się zamknąć ticketa. Sprawdź uprawnienia bota.' });
-            }
-        }
-
-        if (interaction.isButton() && interaction.customId.startsWith('shop_close:')) {
-            const channel = interaction.channel;
-            if (!channel || channel.type !== ChannelType.GuildText) {
-                return safeEphemeralError(interaction, 'To nie jest kanał zamówienia.');
-            }
-
-            const guild = interaction.guild;
-            if (!guild) {
-                return safeEphemeralError(interaction, 'Nie mogę pobrać serwera.');
-            }
-
-            const fromCustomIdOwnerId = interaction.customId.split(':')[1];
-            const topic = String(channel.topic || '');
-            const fromTopicOwnerId = topic.match(/shopOwner=(\d{17,20})/)?.[1] || null;
-            const shopType = topic.match(/shopType=([a-z0-9_\-]+)/i)?.[1]?.toLowerCase() || null;
-            const ownerId = fromTopicOwnerId || fromCustomIdOwnerId || null;
-
-            if (!ownerId) {
-                return safeEphemeralError(interaction, 'Nie mogę ustalić właściciela zamówienia.');
-            }
-
-            try {
-                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-            } catch (err) {
-                if (err?.code === 10062) {
-                    return;
-                }
-                return;
-            }
-
-            if (!SHOP_ARCHIVE_CATEGORY_ID) {
-                return interaction.editReply({ content: 'Nie skonfigurowano archiwum zamówień (SHOP_ARCHIVE_CATEGORY_ID).' });
-            }
-
-            const archiveCategory = await guild.channels.fetch(SHOP_ARCHIVE_CATEGORY_ID).catch(() => null);
-            if (!archiveCategory || archiveCategory.type !== ChannelType.GuildCategory) {
-                return interaction.editReply({ content: 'Nie znaleziono kategorii archiwum zamówień (sprawdź ID kategorii).' });
-            }
-
-            const canClose =
-                interaction.user.id === ownerId ||
-                interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageChannels) ||
-                interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
-
-            if (!canClose) {
-                return interaction.editReply({ content: 'Nie masz uprawnień do zamknięcia tego zamówienia.' });
-            }
-
-            try {
-                await channel.setParent(SHOP_ARCHIVE_CATEGORY_ID, { lockPermissions: false });
-
-                await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
-                    ViewChannel: false,
+                const display = new TextDisplayBuilder().setMessageContent({
+                    header: '```' + headerText + '```',
+                    body: body,
                 });
 
-                for (const roleId of SHOP_STAFF_ROLE_IDS) {
-                    await channel.permissionOverwrites.edit(roleId, {
-                        ViewChannel: true,
-                        ReadMessageHistory: true,
-                        SendMessages: true,
-                    });
+                if (transcriptChannel) {
+                    await transcriptChannel.send({ components: [display], files: [attachment], flags: MessageFlags.IsComponentsV2 });
+                    await transcriptChannel.send({ files: [attachment] });
                 }
 
-                const accessIds = shopType ? getShopAccessEffectiveIdsByType(shopType) : [];
-                for (const id of accessIds) {
-                    await channel.permissionOverwrites.edit(id, {
-                        ViewChannel: false,
-                        SendMessages: false,
-                        ReadMessageHistory: false,
-                    });
+                try {
+                    setTimeout(() => {
+                        removeByChannelId(channel.id);
+                        channel.delete().catch(() => {});
+                    }, 5000);
+
+                    return interaction.editReply({ content: `${isTicket ? 'Ticket' : 'Zamówienie'} zamknięte i zostanie usunięte za 5 sekund.` });
+                } catch (err) {
+                    console.error(`[${isTicket ? 'TICKET' : 'SHOP'}] close failed:`, err);
+                    return interaction.editReply({ content: 'Nie udało się zamknąć kanału. Sprawdź uprawnienia bota.' });
                 }
+            } else if (selectedValue === 'zmien_nazwe') {
+                const modal = new ModalBuilder()
+                    .setCustomId(`management_rename_modal:${ownerId}`)
+                    .setTitle('Zmień nazwę');
 
-                await channel.permissionOverwrites.edit(ownerId, {
-                    ViewChannel: false,
-                    SendMessages: false,
-                    ReadMessageHistory: false,
-                });
+                const input = new TextInputBuilder()
+                    .setCustomId('new_name')
+                    .setLabel('Nowa nazwa kanału')
+                    .setValue(interaction.channel.name)
+                    .setPlaceholder('np. pomoc-problem-z-botem')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true)
+                    .setMaxLength(40);
 
-                return interaction.editReply({ content: 'Zamówienie zamknięte i przeniesione do archiwum.' });
-            } catch (err) {
-                console.error('[SHOP] close failed:', err);
-                return interaction.editReply({ content: 'Nie udało się zamknąć zamówienia. Sprawdź uprawnienia bota.' });
+                const row = new ActionRowBuilder().addComponents(input);
+                modal.addComponents(row);
+
+                await interaction.showModal(modal);
+            } else if (selectedValue === 'zmien_kategorie') {
+                const modal = new ModalBuilder()
+                    .setCustomId(`management_recategory_modal:${ownerId}`)
+                    .setTitle('Zmień kategorię');
+
+                const input = new TextInputBuilder()
+                    .setCustomId('new_category_id')
+                    .setLabel('ID nowej kategorii')
+                    .setPlaceholder('Wklej ID kategorii discord')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true);
+
+                const row = new ActionRowBuilder().addComponents(input);
+                modal.addComponents(row);
+
+                await interaction.showModal(modal);
+            } else if (selectedValue === 'dodaj_uzytkownika') {
+                const modal = new ModalBuilder()
+                    .setCustomId(`management_add_user_modal:${ownerId}`)
+                    .setTitle('Dodaj użytkownika');
+
+                const input = new TextInputBuilder()
+                    .setCustomId('user_id')
+                    .setLabel('ID użytkownika')
+                    .setPlaceholder('Wklej ID użytkownika discord')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true);
+
+                const row = new ActionRowBuilder().addComponents(input);
+                modal.addComponents(row);
+
+                await interaction.showModal(modal);
+            } else if (selectedValue === 'usun_uzytkownika') {
+                const modal = new ModalBuilder()
+                    .setCustomId(`management_remove_user_modal:${ownerId}`)
+                    .setTitle('Usuń użytkownika');
+
+                const input = new TextInputBuilder()
+                    .setCustomId('user_id')
+                    .setLabel('ID użytkownika')
+                    .setPlaceholder('Wklej ID użytkownika discord')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true);
+
+                const row = new ActionRowBuilder().addComponents(input);
+                modal.addComponents(row);
+
+                await interaction.showModal(modal);
+            } else {
+                return interaction.reply({ content: 'Ta funkcjonalność zostanie dodana wkrótce!', flags: MessageFlags.Ephemeral });
             }
         }
 
@@ -1006,6 +1104,116 @@ module.exports = {
                 return interaction.reply({ content: 'Poprawna odpowiedź. Nadano rangę!', flags: MessageFlags.Ephemeral });
             } catch (err) {
                 return interaction.reply({ content: 'Nie mogę nadać rangi. Sprawdź uprawnienia bota i kolejność ról.', flags: MessageFlags.Ephemeral });
+            }
+        }
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('management_rename_modal:')) {
+            const ownerId = interaction.customId.split(':')[1];
+            const newNameRaw = interaction.fields.getTextInputValue('new_name');
+            const newName = sanitizeChannelNamePart(newNameRaw);
+
+            if (!newName) {
+                return interaction.reply({ content: 'Podaj poprawną nazwę.', flags: MessageFlags.Ephemeral });
+            }
+
+            const canManage = interaction.user.id === ownerId || 
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageChannels) ||
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+
+            if (!canManage) {
+                return interaction.reply({ content: 'Nie masz uprawnień do zarządzania tym kanałem.', flags: MessageFlags.Ephemeral });
+            }
+
+            try {
+                await interaction.channel.setName(newName);
+                return interaction.reply({ content: `Zmieniono nazwę kanału na \`${newName}\`.`, flags: MessageFlags.Ephemeral });
+            } catch (err) {
+                console.error('[MANAGEMENT] Rename failed:', err);
+                return interaction.reply({ content: 'Nie udało się zmienić nazwy kanału.', flags: MessageFlags.Ephemeral });
+            }
+        }
+
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('management_recategory_modal:')) {
+            const ownerId = interaction.customId.split(':')[1];
+            const categoryId = interaction.fields.getTextInputValue('new_category_id').trim();
+
+            if (!/^\d{17,20}$/.test(categoryId)) {
+                return interaction.reply({ content: 'Podaj poprawne ID kategorii.', flags: MessageFlags.Ephemeral });
+            }
+
+            const canManage = interaction.user.id === ownerId || 
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageChannels) ||
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+
+            if (!canManage) {
+                return interaction.reply({ content: 'Nie masz uprawnień do zarządzania tym kanałem.', flags: MessageFlags.Ephemeral });
+            }
+
+            const category = interaction.guild.channels.cache.get(categoryId);
+            if (!category || category.type !== ChannelType.GuildCategory) {
+                return interaction.reply({ content: 'Nie znaleziono takiej kategorii na serwerze.', flags: MessageFlags.Ephemeral });
+            }
+
+            try {
+                await interaction.channel.setParent(categoryId, { lockPermissions: false });
+                return interaction.reply({ content: `Zmieniono kategorię kanału na \`${category.name}\`.`, flags: MessageFlags.Ephemeral });
+            } catch (err) {
+                console.error('[MANAGEMENT] Recategory failed:', err);
+                return interaction.reply({ content: 'Nie udało się zmienić kategorii kanału.', flags: MessageFlags.Ephemeral });
+            }
+        }
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('management_add_user_modal:')) {
+            const ownerId = interaction.customId.split(':')[1];
+            const userId = interaction.fields.getTextInputValue('user_id').trim();
+
+            if (!/^\d{17,20}$/.test(userId)) {
+                return interaction.reply({ content: 'Podaj poprawne ID użytkownika.', flags: MessageFlags.Ephemeral });
+            }
+
+            const canManage = interaction.user.id === ownerId || 
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageChannels) ||
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+
+            if (!canManage) {
+                return interaction.reply({ content: 'Nie masz uprawnień do zarządzania tym kanałem.', flags: MessageFlags.Ephemeral });
+            }
+
+            try {
+                await interaction.channel.permissionOverwrites.edit(userId, {
+                    ViewChannel: true,
+                    SendMessages: true,
+                    ReadMessageHistory: true,
+                    AttachFiles: true,
+                    EmbedLinks: true,
+                });
+                return interaction.reply({ content: `Dodano użytkownika <@${userId}> do kanału.`, flags: MessageFlags.Ephemeral });
+            } catch (err) {
+                console.error('[MANAGEMENT] Add user failed:', err);
+                return interaction.reply({ content: 'Nie udało się dodać użytkownika do kanału.', flags: MessageFlags.Ephemeral });
+            }
+        }
+
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('management_remove_user_modal:')) {
+            const ownerId = interaction.customId.split(':')[1];
+            const userId = interaction.fields.getTextInputValue('user_id').trim();
+
+            if (!/^\d{17,20}$/.test(userId)) {
+                return interaction.reply({ content: 'Podaj poprawne ID użytkownika.', flags: MessageFlags.Ephemeral });
+            }
+
+            const canManage = interaction.user.id === ownerId || 
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageChannels) ||
+                             interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+
+            if (!canManage) {
+                return interaction.reply({ content: 'Nie masz uprawnień do zarządzania tym kanałem.', flags: MessageFlags.Ephemeral });
+            }
+
+            try {
+                await interaction.channel.permissionOverwrites.delete(userId);
+                return interaction.reply({ content: `Usunięto użytkownika <@${userId}> z kanału.`, flags: MessageFlags.Ephemeral });
+            } catch (err) {
+                console.error('[MANAGEMENT] Remove user failed:', err);
+                return interaction.reply({ content: 'Nie udało się usunąć użytkownika z kanału.', flags: MessageFlags.Ephemeral });
             }
         }
     },
