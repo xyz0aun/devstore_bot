@@ -3,24 +3,34 @@ const path = require('path');
 
 const DB_PATH = path.join(__dirname, '../giveaways.json');
 
+let dbCache = null;
+
 function getAllGiveaways() {
-    if (!fs.existsSync(DB_PATH)) return {};
+    if (dbCache) return dbCache;
+
+    if (!fs.existsSync(DB_PATH)) {
+        dbCache = {};
+        return dbCache;
+    }
     try {
         const data = JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
         if (Array.isArray(data)) {
             console.log('[GiveawayUtils] Detected legacy Array DB. Resetting to Object.');
-            return {};
+            dbCache = {};
+            return dbCache;
         }
-        return data;
+        dbCache = data;
+        return dbCache;
     } catch (err) {
         console.error('[GiveawayUtils] Error reading DB:', err);
         return {};
     }
 }
 
-function saveGiveaways(data) {
+function saveGiveaways() {
+    if (!dbCache) return;
     try {
-        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+        fs.writeFileSync(DB_PATH, JSON.stringify(dbCache, null, 2));
     } catch (err) {
         console.error('[GiveawayUtils] Error saving DB:', err);
     }
@@ -29,7 +39,7 @@ function saveGiveaways(data) {
 function createGiveaway(data) {
     const db = getAllGiveaways();
     db[data.messageId] = data;
-    saveGiveaways(db);
+    saveGiveaways();
     console.log(`[GiveawayUtils] Created giveaway ${data.messageId}`);
 }
 
@@ -45,7 +55,7 @@ function addParticipant(messageId, userId) {
     }
 
     db[messageId].participants.push(userId);
-    saveGiveaways(db);
+    saveGiveaways();
     console.log(`[GiveawayUtils] Added user ${userId} to ${messageId}. Total: ${db[messageId].participants.length}`);
     return db[messageId].participants.length;
 }
@@ -58,7 +68,7 @@ function removeParticipant(messageId, userId) {
     if (index === -1) return false;
 
     db[messageId].participants.splice(index, 1);
-    saveGiveaways(db);
+    saveGiveaways();
     console.log(`[GiveawayUtils] Removed user ${userId} from ${messageId}`);
     return db[messageId].participants.length;
 }
@@ -89,7 +99,7 @@ function endGiveawayInDb(messageId) {
     const db = getAllGiveaways();
     if (db[messageId]) {
         db[messageId].ended = true;
-        saveGiveaways(db);
+        saveGiveaways();
     }
 }
 

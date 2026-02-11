@@ -20,6 +20,8 @@ const LEGITCHECK_IN_CHANNEL_ID = '1467449579057447105';
 const LEGITCHECK_OUT_CHANNEL_ID = '1467315122555982140';
 const LEGITCHECK_CHANNEL_NAME_PREFIX = '〢✅・ʟᴇɢɪᴛ-ᴄʜᴇᴄᴋ';
 
+const config = require('../config.json');   
+
 const LEGITCHECK_STATE_FILE = path.join(__dirname, '..', 'legitcheck.json');
 
 const LEGITCHECK_RENAME_COOLDOWN_MS = 5 * 60 * 1000;
@@ -67,6 +69,7 @@ const ANTI_LINK_BYPASS_PERMISSIONS = [
     PermissionsBitField.Flags.Administrator,
     PermissionsBitField.Flags.ManageMessages,
 ];
+const ANTI_LINK_BYPASS_ROLES = config.antiLinkBypassRoles;
 const ANTI_LINK_ALLOWED_CHANNEL_IDS = [];
 
 module.exports = {
@@ -83,6 +86,9 @@ module.exports = {
             const hasBypassPerm = Boolean(
                 member && ANTI_LINK_BYPASS_PERMISSIONS.some((perm) => member.permissions.has(perm)),
             );
+            const hasBypassRole = Boolean(
+                member && ANTI_LINK_BYPASS_ROLES.some((role) => member.roles.cache.has(role)),
+            );
 
             const contentToCheck = [message.content, ...message.embeds.map((e) => e.url).filter(Boolean)]
                 .filter(Boolean)
@@ -92,7 +98,7 @@ module.exports = {
                 contentToCheck,
             );
 
-            if (!isAllowedChannel && !hasBypassPerm && hasLink) {
+            if (!isAllowedChannel && !hasBypassPerm && !hasBypassRole && hasLink) {
                 const originalContent = String(message.content || '');
                 const createdTimestamp = message.createdTimestamp;
                 const sourceChannelId = message.channelId;
